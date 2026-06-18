@@ -37,10 +37,16 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data" / "processed"
+SRC_DIR = BASE_DIR / "src"
+HEALTH_FILE = "Dataset_ALDIMI_GravedadPaciente_Enriquecido.csv"
+STOCK_FILE = "Dataset_ALDIMI_Logistica_Enriquecido.csv"
 RISK_ORDER = ["Low", "Medium", "High"]
 RISK_LABELS = {"Low": "Bajo", "Medium": "Medio", "High": "Alto"}
 ALERT_COLORS = {"Critico": "#c1121f", "Preventivo": "#f48c06", "Normal": "#2a9d8f"}
 RISK_COLORS = {"Bajo": "#2a9d8f", "Medio": "#f48c06", "Alto": "#c1121f"}
+REABASTECIMIENTO_ALERT = {0: "Normal", 1: "Preventivo", 2: "Critico"}
+RATIO_CRITICO = 2.2
+RATIO_PREVENTIVO = 5.6
 
 NAV_GROUPS = {
     "Operacion diaria": ["Resumen ejecutivo", "Inventario predictivo", "Priorizacion clinica"],
@@ -94,27 +100,62 @@ st.set_page_config(
 inject_styles()
 
 
-@st.cache_data(show_spinner=False)
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    health = pd.read_csv(DATA_DIR / "Dataset_ALDIMI_Merged_Clean.csv")
-    stock = pd.read_csv(DATA_DIR / "stock_structured.csv", parse_dates=["Fecha"])
-    health_daily = pd.read_csv(DATA_DIR / "health_daily.csv", parse_dates=["Fecha"])
+def resolve_data_path(filename: str) -> Path:
+    for base in (DATA_DIR, SRC_DIR):
+        path = base / filename
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"No se encontro {filename} en data/processed/ ni src/")
 
-    health["Risk_Lifestyle_Score"] = (
-        health["Smoking"]
-        + health["Alcohol_Use"]
-        + health["Obesity"]
-        + health["Air_Pollution"]
-        + health["Occupational_Hazards"]
-    ) / 5
+
+def enrich_health_features(health: pd.DataFrame) -> pd.DataFrame:
+    health = health.copy()
+    if "Habitos_Riesgo" not in health.columns:
+        health["Habitos_Riesgo"] = (
+            health["Smoking"]
+            + health["Alcohol_Use"]
+            + health["Obesity"]
+            + health["Air_Pollution"]
+            + health["Occupational_Hazards"]
+        )
+    if "Riesgo_Clinico" not in health.columns:
+        health["Riesgo_Clinico"] = (
+            health["Family_History"] + health["BRCA_Mutation"] + health["H_Pylori_Infection"]
+        )
+    if "Factor_Protector" not in health.columns:
+        health["Factor_Protector"] = (
+            health["Fruit_Veg_Intake"] + health["Physical_Activity"] + health["Calcium_Intake"]
+        )
+    if "Balance_Riesgo" not in health.columns:
+        health["Balance_Riesgo"] = health["Habitos_Riesgo"] + health["Riesgo_Clinico"] - health["Factor_Protector"]
+    if "Edad_Rango" not in health.columns:
+        health["Edad_Rango"] = pd.cut(
+            health["Age"],
+            bins=[0, 30, 45, 60, 120],
+            labels=["Joven", "Adulto", "Mayor", "Adulto_Mayor"],
+        )
+    health["Risk_Lifestyle_Score"] = health["Habitos_Riesgo"] / 5
     health["Diet_Risk_Index"] = (
-        health["Diet_Red_Meat"]
-        + health["Diet_Salted_Processed"]
-        + (10 - health["Fruit_Veg_Intake"])
+        health["Diet_Red_Meat"] + health["Diet_Salted_Processed"] + (10 - health["Fruit_Veg_Intake"])
     ) / 3
     health["Risk_Level"] = pd.Categorical(health["Risk_Level"], categories=RISK_ORDER, ordered=True)
+    return health
 
+
+def alert_from_ratio(ratio: float) -> str:
+    if ratio <= RATIO_CRITICO:
+        return "Critico"
+    if ratio <= RATIO_PREVENTIVO:
+        return "Preventivo"
+    return "Normal"
+
+
+def enrich_stock_features(stock: pd.DataFrame) -> pd.DataFrame:
     stock = stock.sort_values(["ID_Insumo", "Fecha"]).copy()
+    if "Punto_Reorden" not in stock.columns:
+        stock["Punto_Reorden"] = stock["Consumo_Diario"] * stock["Lead_Time"]
+    if "Ratio_Stock" not in stock.columns:
+        stock["Ratio_Stock"] = stock["Stock_Actual"] / stock["Punto_Reorden"].replace(0, np.nan)
     stock["Consumo_7d"] = stock.groupby("ID_Insumo")["Consumo_Diario"].transform(
         lambda s: s.rolling(7, min_periods=1).mean()
     )
@@ -124,14 +165,26 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     stock["Cobertura_Dias"] = stock["Stock_Actual"] / stock["Consumo_7d"].replace(0, np.nan)
     stock["Stock_Proyectado_7d"] = (stock["Stock_Actual"] - (stock["Consumo_7d"] * 7)).clip(lower=0)
     stock["Stock_Proyectado_14d"] = (stock["Stock_Actual"] - (stock["Consumo_14d"] * 14)).clip(lower=0)
-    stock["Alerta"] = np.select(
-        [
-            stock["Cobertura_Dias"] <= stock["Lead_Time"],
-            stock["Cobertura_Dias"] <= stock["Lead_Time"] + 7,
-        ],
-        ["Critico", "Preventivo"],
-        default="Normal",
+    if "Necesita_Reabastecimiento" in stock.columns:
+        stock["Alerta"] = stock["Necesita_Reabastecimiento"].map(REABASTECIMIENTO_ALERT)
+    else:
+        stock["Alerta"] = stock["Ratio_Stock"].apply(alert_from_ratio)
+    return stock
+
+
+@st.cache_data(show_spinner=False)
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    health = pd.read_csv(resolve_data_path(HEALTH_FILE))
+    stock = pd.read_csv(resolve_data_path(STOCK_FILE), parse_dates=["Fecha"])
+    health_daily_path = DATA_DIR / "health_daily.csv"
+    health_daily = (
+        pd.read_csv(health_daily_path, parse_dates=["Fecha"])
+        if health_daily_path.exists()
+        else pd.DataFrame()
     )
+
+    health = enrich_health_features(health)
+    stock = enrich_stock_features(stock)
     return health, stock, health_daily
 
 
@@ -245,8 +298,19 @@ def train_risk_models(
 def train_stock_models(
     stock: pd.DataFrame,
 ) -> tuple[dict[str, object], pd.DataFrame, list[str], str]:
-    model_df = stock.dropna(subset=["Cobertura_Dias"]).copy()
-    features = ["Consumo_Diario", "Lead_Time", "Ocupacion_Albergue", "Consumo_7d", "Consumo_14d"]
+    model_df = stock.dropna(subset=["Cobertura_Dias", "Ratio_Stock"]).copy()
+    features = [
+        "Consumo_Diario",
+        "Lead_Time",
+        "Ocupacion_Albergue",
+        "Consumo_7d",
+        "Consumo_14d",
+        "Punto_Reorden",
+        "Ratio_Stock",
+        "Pacientes_Alto_Riesgo",
+        "Ocupacion_Total",
+    ]
+    features = [c for c in features if c in model_df.columns]
     X = model_df[features]
     y = model_df["Stock_Actual"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -460,8 +524,8 @@ def render_inventory_view(
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Stock actual", f"{latest['Stock_Actual']:.0f}")
-    m2.metric("Consumo promedio 7d", f"{latest['Consumo_7d']:.1f}")
-    m3.metric("Cobertura", f"{latest['Cobertura_Dias']:.1f} dias")
+    m2.metric("Ratio stock", f"{latest['Ratio_Stock']:.2f}")
+    m3.metric("Punto reorden", f"{latest['Punto_Reorden']:.0f}")
     m4.metric("Alerta", latest["Alerta"])
 
     if require_plotly():
@@ -485,8 +549,8 @@ def render_inventory_view(
         fig.add_trace(
             go.Scatter(
                 x=item_df["Fecha"],
-                y=[latest["Lead_Time"] * latest["Consumo_7d"]] * len(item_df),
-                name="Umbral lead time",
+                y=item_df["Punto_Reorden"],
+                name="Punto reorden",
                 line=dict(color="#f48c06", dash="dash"),
             )
         )
@@ -503,9 +567,12 @@ def render_inventory_view(
                 "Stock_Actual",
                 "Consumo_7d",
                 "Lead_Time",
+                "Punto_Reorden",
+                "Ratio_Stock",
                 "Cobertura_Dias",
                 "Stock_Proyectado_7d",
                 "Stock_Proyectado_14d",
+                "Necesita_Reabastecimiento",
                 "Alerta",
             ]
         ],
@@ -522,31 +589,45 @@ def render_inventory_view(
             "Ocupacion del albergue", 0.0, 1.0, float(latest.get("Ocupacion_Albergue", 0.7)), 0.01
         )
         consumo14 = s4.number_input("Promedio 14 dias", min_value=0.0, value=float(latest["Consumo_14d"]), step=1.0)
+        pacientes_alto = st.number_input(
+            "Pacientes alto riesgo",
+            min_value=0,
+            value=int(latest.get("Pacientes_Alto_Riesgo", 0)),
+            step=1,
+        )
+        ocupacion_total = st.number_input(
+            "Ocupacion total albergue",
+            min_value=0,
+            value=int(latest.get("Ocupacion_Total", 70)),
+            step=1,
+        )
         model_names = list(stock_models.keys())
         model_name = st.selectbox(
             "Modelo",
             model_names,
             index=model_names.index(stock_selected) if stock_selected in model_names else 0,
         )
-        stock_pred = stock_models[model_name].predict(
-            pd.DataFrame(
-                [
-                    {
-                        "Consumo_Diario": consumo,
-                        "Lead_Time": lead,
-                        "Ocupacion_Albergue": ocupacion,
-                        "Consumo_7d": consumo,
-                        "Consumo_14d": consumo14,
-                    }
-                ]
-            )[stock_features]
-        )[0]
-        cobertura = stock_pred / max(consumo, 0.1)
-        alerta = "Critico" if cobertura <= lead else "Preventivo" if cobertura <= lead + 7 else "Normal"
-        r1, r2, r3 = st.columns(3)
+        punto_reorden = consumo * lead
+        ratio_input = latest["Stock_Actual"] / max(punto_reorden, 0.1)
+        stock_row = {
+            "Consumo_Diario": consumo,
+            "Lead_Time": lead,
+            "Ocupacion_Albergue": ocupacion,
+            "Consumo_7d": consumo,
+            "Consumo_14d": consumo14,
+            "Punto_Reorden": punto_reorden,
+            "Ratio_Stock": ratio_input,
+            "Pacientes_Alto_Riesgo": pacientes_alto,
+            "Ocupacion_Total": ocupacion_total,
+        }
+        stock_pred = stock_models[model_name].predict(pd.DataFrame([stock_row])[stock_features])[0]
+        ratio_pred = stock_pred / max(punto_reorden, 0.1)
+        alerta = alert_from_ratio(ratio_pred)
+        r1, r2, r3, r4 = st.columns(4)
         r1.metric("Stock estimado", f"{stock_pred:.0f}")
-        r2.metric("Cobertura estimada", f"{cobertura:.1f} dias")
-        r3.metric("Alerta", alerta)
+        r2.metric("Ratio estimado", f"{ratio_pred:.2f}")
+        r3.metric("Punto reorden", f"{punto_reorden:.0f}")
+        r4.metric("Alerta", alerta)
         if alerta == "Critico":
             st.error("Accion recomendada: iniciar reposicion inmediata antes del lead time.")
         elif alerta == "Preventivo":
@@ -598,29 +679,32 @@ def render_clinical_view(
         with right:
             fig = px.scatter(
                 filtered,
-                x="Risk_Lifestyle_Score",
-                y="Diet_Risk_Index",
+                x="Habitos_Riesgo",
+                y="Balance_Riesgo",
                 color=filtered["Risk_Level"].astype(str).map(RISK_LABELS),
                 opacity=0.65,
                 color_discrete_map=RISK_COLORS,
-                labels={"color": "Prioridad"},
-                hover_data=["Patient_ID", "Age", "BMI"],
+                labels={"color": "Prioridad", "Habitos_Riesgo": "Habitos de riesgo", "Balance_Riesgo": "Balance de riesgo"},
+                hover_data=["Patient_ID", "Age", "BMI", "Factor_Protector"],
             )
             fig.update_layout(height=390, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, width="stretch")
 
     st.subheader("Pacientes sugeridos para seguimiento")
-    follow_up = filtered.sort_values(["Risk_Lifestyle_Score", "Diet_Risk_Index"], ascending=False).head(30)
+    follow_up = filtered.sort_values(["Balance_Riesgo", "Habitos_Riesgo"], ascending=False).head(30)
     st.dataframe(
         follow_up[
             [
                 "Patient_ID",
                 "Cancer_Type",
                 "Age",
+                "Edad_Rango",
                 "BMI",
                 "Family_History",
-                "Risk_Lifestyle_Score",
-                "Diet_Risk_Index",
+                "Habitos_Riesgo",
+                "Riesgo_Clinico",
+                "Factor_Protector",
+                "Balance_Riesgo",
                 "Risk_Level",
             ]
         ],
@@ -664,6 +748,13 @@ def render_clinical_view(
             index=model_names.index(risk_selected) if risk_selected in model_names else 0,
         )
         sample = health.drop(columns=["Patient_ID", "Risk_Level", "Overall_Risk_Score"]).median(numeric_only=True).to_dict()
+        habitos = smoking + alcohol + obesity + air + int(sample.get("Occupational_Hazards", 5))
+        riesgo_clinico = int(family_history) + int(sample.get("BRCA_Mutation", 0)) + int(sample.get("H_Pylori_Infection", 0))
+        factor_protector = fruit + physical_activity + int(sample.get("Calcium_Intake", 5))
+        balance = habitos + riesgo_clinico - factor_protector
+        edad_rango = pd.cut(
+            [age], bins=[0, 30, 45, 60, 120], labels=["Joven", "Adulto", "Mayor", "Adulto_Mayor"]
+        )[0]
         sample.update(
             {
                 "Cancer_Type": cancer_type,
@@ -679,7 +770,12 @@ def render_clinical_view(
                 "Diet_Salted_Processed": salted,
                 "Fruit_Veg_Intake": fruit,
                 "Air_Pollution": air,
-                "Risk_Lifestyle_Score": (smoking + alcohol + obesity + air + sample.get("Occupational_Hazards", 5)) / 5,
+                "Habitos_Riesgo": habitos,
+                "Riesgo_Clinico": riesgo_clinico,
+                "Factor_Protector": factor_protector,
+                "Balance_Riesgo": balance,
+                "Edad_Rango": str(edad_rango),
+                "Risk_Lifestyle_Score": habitos / 5,
                 "Diet_Risk_Index": (red_meat + salted + (10 - fruit)) / 3,
                 "county_CTYNAME": "Demo",
             }
@@ -746,7 +842,17 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
     if dataset == "Clinico":
         if stat_view == "Distribuciones":
             variable = st.selectbox(
-                "Variable", ["Age", "BMI", "Risk_Lifestyle_Score", "Diet_Risk_Index", "Smoking", "Obesity"]
+                "Variable",
+                [
+                    "Age",
+                    "BMI",
+                    "Habitos_Riesgo",
+                    "Riesgo_Clinico",
+                    "Factor_Protector",
+                    "Balance_Riesgo",
+                    "Risk_Lifestyle_Score",
+                    "Diet_Risk_Index",
+                ],
             )
             fig = px.histogram(
                 health,
@@ -766,6 +872,10 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 "Obesity",
                 "Family_History",
                 "Air_Pollution",
+                "Habitos_Riesgo",
+                "Riesgo_Clinico",
+                "Factor_Protector",
+                "Balance_Riesgo",
                 "Risk_Lifestyle_Score",
                 "Diet_Risk_Index",
             ]
@@ -773,8 +883,8 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             fig.update_layout(height=620, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, width="stretch")
         elif stat_view == "Dispersion":
-            x_var = st.selectbox("Eje X", ["Age", "BMI", "Smoking", "Risk_Lifestyle_Score"])
-            y_var = st.selectbox("Eje Y", ["Diet_Risk_Index", "Obesity", "Air_Pollution", "BMI"])
+            x_var = st.selectbox("Eje X", ["Age", "BMI", "Habitos_Riesgo", "Balance_Riesgo", "Risk_Lifestyle_Score"])
+            y_var = st.selectbox("Eje Y", ["Factor_Protector", "Riesgo_Clinico", "Diet_Risk_Index", "BMI"])
             fig = px.scatter(
                 health,
                 x=x_var,
@@ -786,7 +896,10 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, width="stretch")
         elif stat_view == "Outliers (Z-score)":
-            variable = st.selectbox("Variable numerica", ["Age", "BMI", "Risk_Lifestyle_Score", "Diet_Risk_Index"])
+            variable = st.selectbox(
+                "Variable numerica",
+                ["Age", "BMI", "Balance_Riesgo", "Habitos_Riesgo", "Factor_Protector", "Diet_Risk_Index"],
+            )
             threshold = st.slider("Umbral |Z|", 2.0, 4.0, 3.0, 0.1)
             outliers = compute_zscore_outliers(health[variable], threshold)
             st.metric("Outliers detectados", len(outliers))
@@ -825,59 +938,72 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 fig = px.bar(top, x="Cancer_Type", y="Pacientes", color_discrete_sequence=["#1d3557"])
             fig.update_layout(height=460, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, width="stretch")
-    elif stat_view == "Distribuciones":
-        item = st.selectbox("Insumo", sorted(stock["ID_Insumo"].unique()))
-        variable = st.selectbox("Variable", ["Consumo_Diario", "Stock_Actual", "Cobertura_Dias"])
-        fig = px.histogram(
-            stock[stock["ID_Insumo"] == item],
-            x=variable,
-            nbins=35,
-            color_discrete_sequence=["#1d3557"],
-            marginal="box",
-        )
-        fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
-    elif stat_view == "Correlaciones":
-        cols = [
-            "Consumo_Diario",
-            "Stock_Actual",
-            "Lead_Time",
-            "Consumo_7d",
-            "Consumo_14d",
-            "Cobertura_Dias",
-            "Ocupacion_Albergue",
-        ]
-        fig = px.imshow(stock[cols].corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
-        fig.update_layout(height=620, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
-    elif stat_view == "Dispersion":
-        fig = px.scatter(
-            stock,
-            x="Consumo_Diario",
-            y="Stock_Actual",
-            color="Alerta",
-            color_discrete_map=ALERT_COLORS,
-            opacity=0.5,
-        )
-        fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
-    elif stat_view == "Outliers (Z-score)":
-        variable = st.selectbox("Variable", ["Stock_Actual", "Consumo_Diario", "Cobertura_Dias", "Lead_Time"])
-        threshold = st.slider("Umbral |Z|", 2.0, 4.0, 3.0, 0.1)
-        outliers = compute_zscore_outliers(stock[variable], threshold)
-        st.metric("Outliers detectados", len(outliers))
-        st.dataframe(outliers, width="stretch", hide_index=True)
-        fig = px.box(stock.dropna(subset=[variable]), x="ID_Insumo", y=variable)
-        fig.update_layout(height=460, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
-    elif stat_view == "Resumen descriptivo":
-        st.dataframe(stock.describe(include="all").transpose(), width="stretch")
-        download_csv_button(stock.describe(include="all").transpose().reset_index(), "resumen_inventario.csv")
     else:
-        current = latest_stock(stock)
-        fig = px.bar(current, x="ID_Insumo", y="Cobertura_Dias", color="Alerta", color_discrete_map=ALERT_COLORS)
-        fig.update_layout(height=460, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
+        if stat_view == "Distribuciones":
+            item = st.selectbox("Insumo", sorted(stock["ID_Insumo"].unique()))
+            variable = st.selectbox(
+                "Variable",
+                ["Consumo_Diario", "Stock_Actual", "Ratio_Stock", "Punto_Reorden", "Cobertura_Dias"],
+            )
+            fig = px.histogram(
+                stock[stock["ID_Insumo"] == item],
+                x=variable,
+                nbins=35,
+                color_discrete_sequence=["#1d3557"],
+                marginal="box",
+            )
+            fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fig, width="stretch")
+        elif stat_view == "Correlaciones":
+            cols = [
+                "Consumo_Diario",
+                "Stock_Actual",
+                "Lead_Time",
+                "Consumo_7d",
+                "Consumo_14d",
+                "Punto_Reorden",
+                "Ratio_Stock",
+                "Cobertura_Dias",
+                "Ocupacion_Albergue",
+                "Pacientes_Alto_Riesgo",
+                "Ocupacion_Total",
+            ]
+            fig = px.imshow(stock[cols].corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
+            fig.update_layout(height=620, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fig, width="stretch")
+        elif stat_view == "Dispersion":
+            fig = px.scatter(
+                stock,
+                x="Consumo_Diario",
+                y="Stock_Actual",
+                color="Alerta",
+                color_discrete_map=ALERT_COLORS,
+                hover_data=["Ratio_Stock", "Punto_Reorden"],
+                opacity=0.5,
+            )
+            fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fig, width="stretch")
+        elif stat_view == "Outliers (Z-score)":
+            variable = st.selectbox(
+                "Variable", ["Stock_Actual", "Consumo_Diario", "Ratio_Stock", "Cobertura_Dias", "Lead_Time"]
+            )
+            threshold = st.slider("Umbral |Z|", 2.0, 4.0, 3.0, 0.1, key="stock_zscore")
+            outliers = compute_zscore_outliers(stock[variable], threshold)
+            st.metric("Outliers detectados", len(outliers))
+            st.dataframe(outliers, width="stretch", hide_index=True)
+            fig = px.box(stock.dropna(subset=[variable]), x="ID_Insumo", y=variable)
+            fig.update_layout(height=460, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fig, width="stretch")
+        elif stat_view == "Resumen descriptivo":
+            st.dataframe(stock.describe(include="all").transpose(), width="stretch")
+            download_csv_button(stock.describe(include="all").transpose().reset_index(), "resumen_inventario.csv")
+        else:
+            current = latest_stock(stock)
+            fig = px.bar(
+                current, x="ID_Insumo", y="Ratio_Stock", color="Alerta", color_discrete_map=ALERT_COLORS
+            )
+            fig.update_layout(height=460, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fig, width="stretch")
 
 
 def render_mlops_view(
@@ -900,9 +1026,10 @@ def render_mlops_view(
 [Kaggle / API] --> data/raw/
       |
       v
-[Notebooks: merge, EDA, preprocesamiento] --> data/processed/
+[Notebooks: merge, EDA, enriquecimiento] --> data/processed/
       |
-      +--> train.csv / test.csv (experimentacion)
+      +--> Dataset_ALDIMI_GravedadPaciente_Enriquecido.csv
+      +--> Dataset_ALDIMI_Logistica_Enriquecido.csv
       |
       v
 [Modelos: Random Forest + XGBoost] --> metricas (F1, MAE, RMSE, R2)
@@ -915,8 +1042,8 @@ def render_mlops_view(
 
     architecture = pd.DataFrame(
         [
-            ["Capa de datos", "Ingestion y versionado de CSV", "data/raw, data/processed"],
-            ["Capa analitica", "Limpieza, SMOTE, feature engineering", "src/*.ipynb"],
+            ["Capa de datos", "Ingestion y versionado de CSV enriquecidos", HEALTH_FILE + ", " + STOCK_FILE],
+            ["Capa analitica", "Feature engineering (notebook 06)", "Habitos_Riesgo, Ratio_Stock, Necesita_Reabastecimiento"],
             ["Capa de modelos", "Clasificacion y regresion supervisada", "scikit-learn, xgboost"],
             ["Capa de servicio", "Entrenamiento en cache y prediccion en vivo", "streamlit_app.py (@st.cache_resource)"],
             ["Capa de presentacion", "Visualizacion interactiva y simuladores", "Streamlit + Plotly"],
@@ -1073,10 +1200,8 @@ def render_ecosystem_view() -> None:
     flow = pd.DataFrame(
         [
             ["01_Adquisicion_Datos.ipynb", "Ingestion desde Kaggle (salud + inventario)", "data/raw/"],
-            ["02_Integracion_Datasets.ipynb", "Fusion y estructuracion temporal", "stock_structured.csv, health_daily.csv"],
-            ["02_Limpieza_Preprocesamiento.ipynb", "Limpieza, encoding, SMOTE", "train.csv, test.csv"],
-            ["04_Modelado_Predictivo.ipynb", "Entrenamiento RF vs XGBoost", "Metricas y comparacion"],
-            ["05_Analisis_Interpretabilidad_Optimizacion.ipynb", "Validacion, ROC-AUC, importancia", "Modelo final XGBoost"],
+            ["06_Enriquecimiento_Preparacion de Datos.ipynb", "Features clinicas y logisticas", HEALTH_FILE + ", " + STOCK_FILE],
+            ["04/05 Modelado", "Entrenamiento RF vs XGBoost", "Metricas y comparacion"],
             ["streamlit_app.py", "Capa de negocio: KPIs, alertas, simuladores", "Dashboard ALDIMI Core AI"],
         ],
         columns=["Modulo", "Responsabilidad", "Salida"],

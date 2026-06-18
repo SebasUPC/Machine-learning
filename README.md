@@ -5,7 +5,7 @@ Dashboard interactivo para priorización clínica, inventario predictivo y anál
 ## Requisitos
 
 - Python 3.10+
-- Datos procesados en `data/processed/` (generados por los notebooks del repositorio)
+- Datos enriquecidos en `data/processed/` (salida del notebook `06_Enriquecimiento...`)
 
 ## Instalación
 
@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ## Ejecutar el dashboard
 
 ```bash
-streamlit run streamlit_app.py
+python -m streamlit run streamlit_app.py
 ```
 
 ## Estructura principal
@@ -26,7 +26,8 @@ streamlit run streamlit_app.py
 | Ruta | Descripción |
 |---|---|
 | `streamlit_app.py` | Dashboard ALDIMI Core AI |
-| `data/processed/` | CSV consolidados (salud, inventario) |
+| `data/processed/Dataset_ALDIMI_GravedadPaciente_Enriquecido.csv` | Pacientes + features de riesgo |
+| `data/processed/Dataset_ALDIMI_Logistica_Enriquecido.csv` | Inventario + ratio y reabastecimiento |
 | `src/*.ipynb` | Pipeline de datos, modelado y evaluación |
 
 ## Módulos del dashboard
