@@ -33,6 +33,11 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+import pickle
+try:
+    import joblib
+except Exception:
+    joblib = None
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,29 +95,63 @@ def inject_styles() -> None:
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.2rem; }
-        .feature-card {
-            background: linear-gradient(135deg, #f8f9fa 0%, #eef2f7 100%) !important;
-            border-left: 4px solid #1d3557 !important;
-            border-radius: 8px !important;
-            padding: 0.85rem 1rem !important;
-            margin-bottom: 0.5rem !important;
+        .block-container { padding: 1.5rem 1.8rem 2rem 1.8rem; max-width: 1400px; }
+        .top-bar {
+            background: linear-gradient(90deg, #176f93 0%, #1d9aa9 100%);
+            padding: 0.7rem 1rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
-        .feature-card h4 { margin: 0 0 0.25rem 0 !important; color: #1d3557 !important; font-size: 0.95rem !important; }
-        .feature-card p { margin: 0 !important; color: #495057 !important; font-size: 0.85rem !important; }
-        div[data-testid="stMetric"] {
-            background-color: #f8f9fa !important;
-            border: 1px solid #dee2e6 !important;
-            border-radius: 10px !important;
-            padding: 0.5rem 0.75rem !important;
+        .top-bar h1 { margin: 0; font-size: 1.4rem; letter-spacing: 0.05em; }
+        .nav-button {
+            background: rgba(255,255,255,0.12);
+            color: #ffffff;
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 999px;
+            padding: 0.55rem 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 0.4rem;
+            transition: all 0.18s ease;
+            text-align: center;
         }
-        /* Garantizar visibilidad de etiqueta y valor en temas claros/oscuros */
-        div[data-testid="stMetric"] label[data-testid="stMetricLabel"] {
-            color: #495057 !important;
+        .nav-button:hover { background: rgba(255,255,255,0.22); }
+        .nav-button.active { background: #ffffff; color: #176f93; border-color: #ffffff; }
+        .hero-card, .page-card { background: white; border-radius: 20px; padding: 1.3rem; box-shadow: 0 14px 35px rgba(0,0,0,0.06); }
+        .hero-card { text-align: center; margin-bottom: 1.4rem; }
+        .hero-title { margin-top: 0.85rem; margin-bottom: 0.4rem; font-size: 2rem; color: #0b2947; }
+        .hero-subtitle { color: #3f5d78; font-size: 1rem; margin-bottom: 1.4rem; }
+        .hero-button {
+            background: #1d9aa9;
+            border: none;
+            color: white;
+            border-radius: 999px;
+            padding: 0.8rem 1.5rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin: 0.4rem;
         }
-        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-            color: #1d3557 !important;
+        .hero-button:hover { opacity: 0.92; }
+        .metric-card { background: #eaf6fb; border-radius: 18px; padding: 1rem 1.2rem; }
+        .metric-card h3 { margin: 0 0 0.2rem 0; font-size: 1.2rem; color: #176f93; }
+        .metric-card p { margin: 0; font-size: 1.7rem; font-weight: 700; color: #0c2f44; }
+        .section-box { background: white; border-radius: 20px; padding: 1.2rem; box-shadow: 0px 18px 33px rgba(45, 72, 101, 0.08); }
+        .section-box h4 { margin-top: 0; }
+        .selection-pill button {
+            background: #e5f4fb;
+            border: none;
+            border-radius: 999px;
+            padding: 0.7rem 1.1rem;
+            margin-right: 0.5rem;
+            color: #176f93;
+            font-weight: 600;
+            cursor: pointer;
         }
+        .selection-pill button.active { background: #176f93; color: white; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -497,6 +536,31 @@ def require_plotly() -> bool:
     return True
 
 
+def save_bundle(path: Path, bundle: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if joblib is not None:
+            joblib.dump(bundle, path)
+        else:
+            with open(path, "wb") as f:
+                pickle.dump(bundle, f)
+    except Exception:
+        pass
+
+
+def load_bundle(path: Path):
+    try:
+        if not path.exists():
+            return None
+        if joblib is not None:
+            return joblib.load(path)
+        else:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+    except Exception:
+        return None
+
+
 def format_percent(value: float) -> str:
     return f"{value:.2%}"
 
@@ -515,7 +579,7 @@ def render_feature_cards() -> None:
     cards = [
         ("Priorizacion clinica", "Clasifica pacientes en Bajo, Medio y Alto riesgo con simulador interactivo."),
         ("Inventario predictivo", "Anticipa quiebres con alertas Critico / Preventivo / Normal."),
-        ("Menu estadistico", "Explora distribuciones, correlaciones y outliers sin salir del dashboard."),
+        ("Menu estadistico", "Explora distribuciones, correlaciones, outliers y tendencias operativas."),
     ]
     cols = st.columns(3)
     for col, (title, text) in zip(cols, cards):
@@ -525,18 +589,246 @@ def render_feature_cards() -> None:
         )
 
 
-def render_global_kpis(health: pd.DataFrame, stock: pd.DataFrame) -> None:
-    current_stock = latest_stock(stock)
-    high_risk = int((health["Risk_Level"].astype(str) == "High").sum())
-    critical = int((current_stock["Alerta"] == "Critico").sum())
-    preventive = int((current_stock["Alerta"] == "Preventivo").sum())
-    avg_cover = current_stock["Cobertura_Dias"].mean()
+def set_pending_page(page_name: str) -> None:
+    st.session_state.next_page = page_name
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Pacientes", f"{len(health):,}")
-    c2.metric("Alto riesgo", f"{high_risk:,}")
-    c3.metric("Alertas stock", critical + preventive, f"{critical} criticas")
-    c4.metric("Cobertura media", f"{avg_cover:.1f} dias")
+
+def render_top_navigation() -> str:
+    if "page" not in st.session_state:
+        st.session_state.page = "Inicio"
+
+    if "next_page" in st.session_state:
+        st.session_state.page = st.session_state.pop("next_page")
+
+    st.markdown(
+        """
+        <div class='top-bar'>
+            <div><strong>ALIMDI Core AI</strong></div>
+            <div style='color:#ffffff;font-size:0.95rem;'>Navegación principal</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    page_options = ["Inicio", "Control Stock", "Gravedad Paciente", "Modelado"]
+    selected_index = page_options.index(st.session_state.page) if st.session_state.page in page_options else 0
+    page = st.radio(
+        "",
+        page_options,
+        index=selected_index,
+        horizontal=True,
+        key="page",
+    )
+
+    st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
+    return page
+
+
+def render_metric_card(title: str, value: str, subtitle: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class='metric-card'>
+            <h3>{title}</h3>
+            <p>{value}</p>
+            <small style='color: #4a6b82;'>{subtitle}</small>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_welcome_page() -> None:
+    st.markdown(
+        """
+        <div class='hero-card'>
+            <div style='display:flex;justify-content:center;'>
+                <img src='https://img.icons8.com/ios-filled/160/1d9aa9/medical-snake.png' alt='ALIMDI' />
+            </div>
+            <div class='hero-title'>Bienvenido a ALIMDI</div>
+            <div class='hero-subtitle'>Dashboard de control de stock y priorización clínica para ALDIMI Core AI.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    with c2:
+        st.button(
+            "CONTROL STOCK",
+            key="btn_welcome_stock",
+            on_click=set_pending_page,
+            args=("Control Stock",),
+        )
+    with c3:
+        st.button(
+            "GRAVEDAD PACIENTE",
+            key="btn_welcome_gravedad",
+            on_click=set_pending_page,
+            args=("Gravedad Paciente",),
+        )
+    st.info("Usa las pestañas superiores o los botones rápidos para navegar.")
+
+
+def render_control_stock_page(stock: pd.DataFrame) -> None:
+    st.markdown("# Control de stock")
+    latest = latest_stock(stock)
+    key_item = latest.iloc[0] if not latest.empty else None
+
+    if key_item is not None:
+        c1, c2, c3, c4 = st.columns(4, gap="large")
+        with c1:
+            render_metric_card("Stock actual", f"{int(key_item['Stock_Actual']):,} uds", "Insumo más crítico")
+        with c2:
+            render_metric_card("Ratio Stock", f"{key_item['Ratio_Stock']:.2f}", "Nivel actual del insumo")
+        with c3:
+            render_metric_card("Punto reorden", f"{int(key_item['Punto_Reorden']):,}", "Umbral de reposición")
+        with c4:
+            render_metric_card("Tipo de alerta", f"{key_item['Alerta']}", "Estado de cobertura")
+    else:
+        st.warning("No hay datos de inventario disponibles.")
+
+    st.markdown("### Graficas")
+    st.markdown("<div class='section-box' style='padding:1rem;'>", unsafe_allow_html=True)
+    if require_plotly() and not stock.empty:
+        fig = px.bar(
+            latest.head(8),
+            x="ID_Insumo",
+            y="Cobertura_Dias",
+            color="Alerta",
+            color_discrete_map=ALERT_COLORS,
+            labels={"Cobertura_Dias": "Dias de cobertura", "ID_Insumo": "Insumo"},
+        )
+        fig.update_layout(height=360, margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.write("Gráfica disponible cuando Plotly esté instalado y hay datos de stock.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("### Lista prioridad de reposición")
+    st.markdown("<div class='section-box'>", unsafe_allow_html=True)
+    if not latest.empty:
+        st.dataframe(
+            latest[["ID_Insumo", "Stock_Actual", "Ratio_Stock", "Punto_Reorden", "Cobertura_Dias", "Alerta"]].head(12),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.write("No hay datos de stock para mostrar.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_gravedad_page(health: pd.DataFrame) -> None:
+    st.markdown("# Gravedad de Paciente")
+    severity = st.radio("Nivel de gravedad", ["Bajo", "Medio", "Alto"], horizontal=True)
+    cancer_type = st.selectbox(
+        "Tipo de cancer",
+        sorted(health["Cancer_Type"].dropna().unique()),
+        index=0,
+        key="gravedad_cancer_type",
+    )
+
+    filtered = health[health["Risk_Level"].astype(str).map(RISK_LABELS) == severity]
+    filtered_type = health[health["Cancer_Type"] == cancer_type]
+
+    st.markdown("<div class='section-box' style='display:grid;grid-template-columns:1fr 1fr;gap:1rem;'>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("### Grafica nivel de gravedad")
+        if require_plotly() and not filtered.empty:
+            fig = px.histogram(
+                filtered,
+                x="Risk_Level",
+                color=filtered["Risk_Level"].astype(str).map(RISK_LABELS),
+                color_discrete_map=RISK_COLORS,
+                title="Distribución por nivel de gravedad",
+            )
+            fig.update_layout(height=320, margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.write("No hay datos disponibles.")
+    with st.container():
+        st.markdown("### Grafica tipo de cancer")
+        if require_plotly() and not filtered_type.empty:
+            counts = filtered_type["Cancer_Type"].value_counts().reset_index()
+            counts.columns = ["Cancer_Type", "Cantidad"]
+            fig = px.bar(counts, x="Cancer_Type", y="Cantidad", color="Cancer_Type")
+            fig.update_layout(height=320, margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.write("No hay datos disponibles.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        render_metric_card("Nro pacientes de la gravedad seleccionada", f"{len(filtered):,}")
+    with c2:
+        render_metric_card("Nro pacientes tipo de cáncer", f"{len(filtered_type):,}")
+
+    st.markdown("### Lista de Pacientes sugeridos para seguimiento")
+    st.markdown("<div class='section-box'>", unsafe_allow_html=True)
+    st.dataframe(
+        filtered[["Patient_ID", "Cancer_Type", "Age", "county_CTYNAME", "Balance_Riesgo"]].head(12),
+        hide_index=True,
+        width="stretch",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_modelado_page(risk_metrics: pd.DataFrame, stock_metrics: pd.DataFrame, risk_selected: str, stock_selected: str) -> None:
+    st.markdown("# Modelado")
+    st.markdown("<div class='section-box' style='display:grid;grid-template-columns:1fr 1fr;gap:1rem;'>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("### Métricas del modelo 1")
+        if risk_metrics is not None:
+            st.dataframe(risk_metrics, width="stretch", hide_index=True)
+        else:
+            st.write("Se cargará cuando la sección requiera entrenamiento de modelos clínicos.")
+    with st.container():
+        st.markdown("### Métricas del modelo 2")
+        if stock_metrics is not None:
+            st.dataframe(stock_metrics, width="stretch", hide_index=True)
+        else:
+            st.write("Se cargará cuando la sección requiera entrenamiento de modelos de inventario.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_final_page(
+    page: str,
+    health_df: pd.DataFrame,
+    stock_df: pd.DataFrame,
+    risk_metrics_df,
+    stock_metrics_df,
+    risk_models,
+    stock_models,
+    risk_features,
+    stock_features,
+    label_encoder,
+    confusion_df,
+    risk_selected,
+    stock_selected,
+) -> None:
+    if page == "Inicio":
+        render_welcome_page()
+    elif page == "Control Stock":
+        render_control_stock_page(stock_df)
+        if stock_models is not None and stock_features is not None and stock_selected is not None:
+            render_inventory_view(stock_df, stock_models, stock_features, stock_selected)
+        else:
+            st.warning("Los modelos de inventario no estan disponibles actualmente para las predicciones.")
+    elif page == "Gravedad Paciente":
+        render_gravedad_page(health_df)
+        if risk_models is not None and risk_features is not None and label_encoder is not None and confusion_df is not None:
+            render_clinical_view(
+                health_df,
+                risk_models,
+                risk_features,
+                label_encoder,
+                confusion_df,
+                risk_selected,
+            )
+        else:
+            st.warning("Los modelos clinicos no estan disponibles actualmente para las predicciones.")
+    elif page == "Modelado":
+        render_modelado_page(risk_metrics_df, stock_metrics_df, risk_selected, stock_selected)
+
 
 
 def render_model_metrics(
@@ -591,6 +883,20 @@ def render_confusion_heatmap(confusion_df: pd.DataFrame, model_name: str) -> Non
     st.plotly_chart(fig, width="stretch")
 
 
+def render_global_kpis(health: pd.DataFrame, stock: pd.DataFrame) -> None:
+    current_stock = latest_stock(stock)
+    high_risk = int((health["Risk_Level"].astype(str) == "High").sum())
+    critical = int((current_stock["Alerta"] == "Critico").sum()) if not current_stock.empty else 0
+    preventive = int((current_stock["Alerta"] == "Preventivo").sum()) if not current_stock.empty else 0
+    avg_cover = current_stock["Cobertura_Dias"].mean() if not current_stock.empty else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pacientes", f"{len(health):,}")
+    c2.metric("Alto riesgo", f"{high_risk:,}")
+    c3.metric("Alertas stock", critical + preventive, f"{critical} criticas")
+    c4.metric("Cobertura media", f"{avg_cover:.1f} dias")
+
+
 def render_executive_view(
     health: pd.DataFrame,
     stock: pd.DataFrame,
@@ -629,7 +935,7 @@ def render_executive_view(
             color_discrete_map=ALERT_COLORS,
             labels={"Cobertura_Dias": "Dias de cobertura", "ID_Insumo": "Insumo"},
         )
-        fig.update_layout(height=430, margin=dict(l=10, r=10, t=20, b=10), yaxis={"categoryorder": "total ascending"})
+        fig.update_layout(height=320, margin=dict(l=8, r=8, t=16, b=8), yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig, width="stretch")
         st.caption("Descripción: Días de cobertura restante por insumo crítico. Los colores indican alertas de riesgo (Rojo: Crítico <= 2.2 días, Naranja: Preventivo <= 5.6 días, Verde: Normal).")
     with col_b:
@@ -644,7 +950,7 @@ def render_executive_view(
             color=risk_counts.index,
             color_discrete_map=RISK_COLORS,
         )
-        fig.update_layout(height=430, margin=dict(l=10, r=10, t=20, b=10))
+        fig.update_layout(height=320, margin=dict(l=8, r=8, t=16, b=8))
         st.plotly_chart(fig, width="stretch")
         st.caption("Descripción: Proporción de niños en el albergue según el nivel de riesgo/prioridad estimado por el modelo de ML (Random Forest/XGBoost).")
 
@@ -675,10 +981,17 @@ def render_inventory_view(
     st.divider()
     
     c1, c2, c3 = st.columns([1, 1, 1])
-    selected_item = c1.selectbox("Insumo", sorted(stock["ID_Insumo"].unique()))
+    selected_item = c1.selectbox(
+        "Insumo",
+        sorted(stock["ID_Insumo"].unique()),
+        key="inventory_selected_item",
+    )
     horizon = c2.radio("Horizonte", ["7 dias", "14 dias"], horizontal=True)
     alert_filter = c3.multiselect(
-        "Alertas", ["Critico", "Preventivo", "Normal"], default=["Critico", "Preventivo", "Normal"]
+        "Alertas",
+        ["Critico", "Preventivo", "Normal"],
+        default=["Critico", "Preventivo", "Normal"],
+        key="inventory_alert_filter",
     )
 
     item_df = stock[stock["ID_Insumo"] == selected_item].sort_values("Fecha")
@@ -729,7 +1042,7 @@ def render_inventory_view(
                 line=dict(color="#f48c06", dash="dot"),
             )
         )
-        fig.update_layout(height=430, margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Unidades")
+        fig.update_layout(height=320, margin=dict(l=8, r=8, t=16, b=8), yaxis_title="Unidades")
         st.markdown("**Figure 3: Tendencia Temporal e Inventario Predictivo del Insumo Seleccionado**")
         st.plotly_chart(fig, width="stretch")
         st.caption("Descripción: Evolución temporal del stock real frente al punto de reorden y las proyecciones lineales simples junto al pronóstico inteligente del modelo de Machine Learning (XGBoost/RF).")
@@ -785,6 +1098,7 @@ def render_inventory_view(
             "Modelo",
             model_names,
             index=model_names.index(stock_selected) if stock_selected in model_names else 0,
+            key="inventory_model",
         )
         punto_reorden = consumo * lead
         ratio_input = latest["Stock_Actual"] / max(punto_reorden, 0.1)
@@ -899,7 +1213,7 @@ def render_clinical_view(
                 color_discrete_map=RISK_COLORS,
                 labels={"x": "Prioridad", "y": "Pacientes"},
             )
-            fig.update_layout(height=390, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=330, showlegend=False, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Distribución de pacientes según el nivel de prioridad asignado en el conjunto de datos filtrado.")
         with right:
@@ -914,7 +1228,7 @@ def render_clinical_view(
                 labels={"color": "Prioridad", "Habitos_Riesgo": "Habitos de riesgo", "Balance_Riesgo": "Balance de riesgo"},
                 hover_data=["Patient_ID", "Age", "BMI", "Factor_Protector"],
             )
-            fig.update_layout(height=390, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=330, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Relación entre hábitos de riesgo y el balance total clínico-social, mapeado al color de prioridad asignado por el modelo.")
 
@@ -961,7 +1275,11 @@ def render_clinical_view(
             age = st.slider("Edad", 1, 90, 14)
             bmi = st.slider("BMI", 14.0, 40.0, 24.0, 0.1)
             family_history = st.toggle("Historial familiar")
-            cancer_type = st.selectbox("Tipo de cancer", sorted(health["Cancer_Type"].unique()))
+            cancer_type = st.selectbox(
+                "Tipo de cancer",
+                sorted(health["Cancer_Type"].unique()),
+                key="clinical_simulator_cancer_type",
+            )
         with col_b:
             smoking = st.slider("Tabaquismo / exposicion", 0, 10, 3)
             alcohol = st.slider("Alcohol / exposicion", 0, 10, 2)
@@ -978,6 +1296,7 @@ def render_clinical_view(
             "Modelo de clasificacion",
             model_names,
             index=model_names.index(risk_selected) if risk_selected in model_names else 0,
+            key="simulator_risk_model",
         )
         sample = health.drop(columns=["Patient_ID", "Risk_Level", "Overall_Risk_Score"]).median(numeric_only=True).to_dict()
         habitos = smoking + alcohol + obesity + air + int(sample.get("Occupational_Hazards", 5))
@@ -1057,7 +1376,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
         "distribuciones, correlaciones, outliers y resumen."
     )
 
-    dataset = st.radio("Dataset", ["Clinico", "Inventario"], horizontal=True)
+    dataset = st.radio("Dataset", ["Clinico", "Inventario"], horizontal=True, key="stats_dataset")
     stat_view = st.selectbox(
         "Tipo de analisis",
         [
@@ -1068,6 +1387,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             "Resumen descriptivo",
             "Analisis por categoria",
         ],
+        key="stats_type",
     )
 
     if not require_plotly():
@@ -1087,6 +1407,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                     "Risk_Lifestyle_Score",
                     "Diet_Risk_Index",
                 ],
+                key="stats_clinico_variable",
             )
             st.markdown("**Figure 8: Distribución y Análisis de Densidad de la Variable Clínica**")
             fig = px.histogram(
@@ -1096,7 +1417,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 color_discrete_map=RISK_COLORS,
                 marginal="box",
             )
-            fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10), bargap=0.05)
+            fig.update_layout(height=360, margin=dict(l=8, r=8, t=16, b=8), bargap=0.05)
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Histograma de frecuencia y diagrama de caja marginal que muestra la distribución de la variable clínica seleccionada, estratificada por prioridad.")
         elif stat_view == "Correlaciones":
@@ -1117,12 +1438,20 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             ]
             st.markdown("**Figure 9: Matriz de Correlación Numérica de Factores de Riesgo**")
             fig = px.imshow(health[cols].corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
-            fig.update_layout(height=620, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=380, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Mapa de calor de coeficientes de correlación de Pearson entre las variables clínicas y socioeconómicas del dataset.")
         elif stat_view == "Dispersion":
-            x_var = st.selectbox("Eje X", ["Age", "BMI", "Habitos_Riesgo", "Balance_Riesgo", "Risk_Lifestyle_Score"])
-            y_var = st.selectbox("Eje Y", ["Factor_Protector", "Riesgo_Clinico", "Diet_Risk_Index", "BMI"])
+            x_var = st.selectbox(
+                "Eje X",
+                ["Age", "BMI", "Habitos_Riesgo", "Balance_Riesgo", "Risk_Lifestyle_Score"],
+                key="stats_clinico_x_var",
+            )
+            y_var = st.selectbox(
+                "Eje Y",
+                ["Factor_Protector", "Riesgo_Clinico", "Diet_Risk_Index", "BMI"],
+                key="stats_clinico_y_var",
+            )
             st.markdown("**Figure 10: Relación de Dispersión entre Variables del Paciente**")
             fig = px.scatter(
                 health,
@@ -1132,13 +1461,14 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 color_discrete_map=RISK_COLORS,
                 opacity=0.6,
             )
-            fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=340, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Gráfico de dispersión bidimensional que cruza dos indicadores de riesgo y resalta la prioridad asignada.")
         elif stat_view == "Outliers (Z-score)":
             variable = st.selectbox(
                 "Variable numerica",
                 ["Age", "BMI", "Balance_Riesgo", "Habitos_Riesgo", "Factor_Protector", "Diet_Risk_Index"],
+                key="stats_clinico_outlier_variable",
             )
             threshold = st.slider("Umbral |Z|", 2.0, 4.0, 3.0, 0.1)
             outliers = compute_zscore_outliers(health[variable], threshold)
@@ -1154,7 +1484,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 color=health["Risk_Level"].astype(str).map(RISK_LABELS),
                 color_discrete_map=RISK_COLORS,
             )
-            fig.update_layout(height=420, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=330, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Diagrama de caja estratificado que identifica la distribución de cuartiles y outliers de la variable clínica.")
         elif stat_view == "Resumen descriptivo":
@@ -1163,7 +1493,12 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             st.caption("Descripción: Métricas descriptivas agregadas (media, desviación estándar, mínimos, cuartiles y máximos) para el dataset clínico.")
             download_csv_button(health.describe(include="all").transpose().reset_index(), "resumen_clinico.csv")
         else:
-            view = st.radio("Categoria", ["Historial familiar vs riesgo", "Top tipos de cancer"], horizontal=True)
+            view = st.radio(
+                "Categoria",
+                ["Historial familiar vs riesgo", "Top tipos de cancer"],
+                horizontal=True,
+                key="stats_clinico_category",
+            )
             if view == "Historial familiar vs riesgo":
                 st.markdown("**Figure 12: Distribución de Pacientes según Historial Familiar y Nivel de Prioridad**")
                 grouped = (
@@ -1180,7 +1515,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                     barmode="group",
                     color_discrete_map=RISK_COLORS,
                 )
-                fig.update_layout(height=460, margin=dict(l=10, r=10, t=20, b=10))
+                fig.update_layout(height=340, margin=dict(l=10, r=10, t=16, b=10))
                 st.plotly_chart(fig, width="stretch")
                 st.caption("Descripción: Comparativa por grupos del volumen de pacientes según antecedentes familiares de cáncer y su prioridad clínica.")
             else:
@@ -1188,15 +1523,20 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 top = health["Cancer_Type"].value_counts().head(8).reset_index()
                 top.columns = ["Cancer_Type", "Pacientes"]
                 fig = px.bar(top, x="Cancer_Type", y="Pacientes", color_discrete_sequence=["#1d3557"])
-                fig.update_layout(height=460, margin=dict(l=10, r=10, t=20, b=10))
+                fig.update_layout(height=340, margin=dict(l=10, r=10, t=16, b=10))
                 st.plotly_chart(fig, width="stretch")
                 st.caption("Descripción: Frecuencia absoluta de los tipos de cáncer más comunes registrados entre los pacientes del albergue.")
     else:
         if stat_view == "Distribuciones":
-            item = st.selectbox("Insumo", sorted(stock["ID_Insumo"].unique()))
+            item = st.selectbox(
+                "Insumo",
+                sorted(stock["ID_Insumo"].unique()),
+                key="stats_inventory_item",
+            )
             variable = st.selectbox(
                 "Variable",
                 ["Consumo_Diario", "Stock_Actual", "Ratio_Stock", "Punto_Reorden", "Cobertura_Dias"],
+                key="stats_inventory_variable",
             )
             st.markdown("**Figure 14: Distribución y Densidad de Variables del Insumo**")
             fig = px.histogram(
@@ -1206,7 +1546,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
                 color_discrete_sequence=["#1d3557"],
                 marginal="box",
             )
-            fig.update_layout(height=480, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=340, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Histograma de frecuencia y boxplot para analizar la variabilidad del comportamiento logístico del insumo seleccionado.")
         elif stat_view == "Correlaciones":
@@ -1225,7 +1565,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             ]
             st.markdown("**Figure 15: Matriz de Correlación de Pearson para Variables del Inventario**")
             fig = px.imshow(stock[cols].corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
-            fig.update_layout(height=620, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=380, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Relación lineal entre variables de stock, tasas de consumo diario/móvil y variables contextuales del albergue.")
         elif stat_view == "Dispersion":
@@ -1256,7 +1596,7 @@ def render_statistics_view(health: pd.DataFrame, stock: pd.DataFrame) -> None:
             
             st.markdown("**Figure 17: Análisis de Outliers por Insumo (Diagrama de Caja)**")
             fig = px.box(stock.dropna(subset=[variable]), x="ID_Insumo", y=variable)
-            fig.update_layout(height=460, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
+            fig.update_layout(height=340, showlegend=False, margin=dict(l=10, r=10, t=16, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("Descripción: Caja de variabilidad por tipo de insumo logístico para identificar anomalías de abastecimiento o picos de demanda.")
         elif stat_view == "Resumen descriptivo":
@@ -1523,227 +1863,116 @@ def render_ecosystem_view() -> None:
     st.info("Repositorio del proyecto: https://github.com/SebasUPC/Machine-learning")
 
 
-def render_sidebar(health_df, stock_df, risk_models, risk_features, label_encoder, stock_models, stock_features) -> str:
-    st.sidebar.title("ALDIMI Core AI")
-    st.sidebar.caption("Ecosistema de gestion inteligente")
-
-    group = st.sidebar.selectbox("Area", list(NAV_GROUPS.keys()))
-    section = st.sidebar.radio("Seccion", NAV_GROUPS[group])
-    
-    st.sidebar.divider()
-    
-    # Ingestión OCR en tiempo real (simulada)
-    with st.sidebar.expander("📥 Ingestión en Tiempo Real (OCR)", expanded=False):
-        ingestion_type = st.radio("Tipo de dato", ["Paciente (Clínico)", "Inventario (Logística)"], key="ingest_type")
-        
-        if ingestion_type == "Paciente (Clínico)":
-            st.caption("Simula la digitalización OCR de la ficha del paciente.")
-            with st.form("ocr_patient_form", clear_on_submit=True):
-                pat_id = st.number_input("Patient ID", min_value=10000, max_value=99999, value=25000, step=1)
-                cancer_type = st.selectbox("Tipo de Cáncer", ["Lung", "Colon", "Skin", "Breast", "Leukemia", "Lymphoma", "Stomach", "Kidney", "Bladder", "Prostate"])
-                age = st.slider("Edad (Años)", 1, 100, 12)
-                gender = st.selectbox("Género", [0, 1], format_func=lambda x: "Femenino" if x == 0 else "Masculino")
-                bmi = st.number_input("BMI (Masa Corporal)", min_value=10.0, max_value=50.0, value=20.5, step=0.1)
-                
-                # Factores Clínicos y Riesgos
-                family_hist = st.checkbox("Historial Familiar de Cáncer", value=False)
-                brca = st.checkbox("Mutación BRCA", value=False)
-                hpylori = st.checkbox("Infección H. Pylori", value=False)
-                
-                # Hábitos
-                smoking = st.slider("Consumo Tabaco (0-10)", 0, 10, 0)
-                alcohol = st.slider("Consumo Alcohol (0-10)", 0, 10, 0)
-                obesity = st.slider("Índice Obesidad (0-10)", 0, 10, 2)
-                air_pollution = st.slider("Contaminación Aire (0-10)", 0, 10, 3)
-                occ_hazards = st.slider("Riesgo Ocupacional (0-10)", 0, 10, 0)
-                
-                # Factores Protectores y Dieta
-                physical_activity = st.slider("Actividad Física (0-10)", 0, 10, 6)
-                calcium = st.slider("Consumo Calcio (0-10)", 0, 10, 5)
-                red_meat = st.slider("Consumo Carne Roja (0-10)", 0, 10, 3)
-                salted = st.slider("Consumo Procesados (0-10)", 0, 10, 2)
-                fruit = st.slider("Consumo Fruta/Verdura (0-10)", 0, 10, 7)
-                
-                # Condado
-                county_name = st.text_input("Nombre de Condado", value="Lima")
-                county_state = st.number_input("Estado ID (county_STATE)", min_value=1, max_value=100, value=15)
-                county_pop = st.number_input("Población Condado", min_value=1000, value=50000)
-                
-                submitted = st.form_submit_button("Ingestar y Predecir")
-                
-                if submitted:
-                    # Enriquecimiento de variables en tiempo real
-                    habitos = smoking + alcohol + obesity + air_pollution + occ_hazards
-                    riesgo_clinico = int(family_hist) + int(brca) + int(hpylori)
-                    factor_protector = fruit + physical_activity + calcium
-                    balance = habitos + riesgo_clinico - factor_protector
-                    
-                    edad_rango = pd.cut(
-                        [age],
-                        bins=[0, 30, 45, 60, 120],
-                        labels=["Joven", "Adulto", "Mayor", "Adulto_Mayor"],
-                    )[0]
-                    
-                    patient_dict = {
-                        "Patient_ID": int(pat_id),
-                        "Cancer_Type": cancer_type,
-                        "Age": int(age),
-                        "Gender": int(gender),
-                        "Smoking": int(smoking),
-                        "Alcohol_Use": int(alcohol),
-                        "Obesity": int(obesity),
-                        "Family_History": int(family_hist),
-                        "Diet_Red_Meat": int(red_meat),
-                        "Diet_Salted_Processed": int(salted),
-                        "Fruit_Veg_Intake": int(fruit),
-                        "Physical_Activity": int(physical_activity),
-                        "Air_Pollution": int(air_pollution),
-                        "Occupational_Hazards": int(occ_hazards),
-                        "BRCA_Mutation": int(brca),
-                        "H_Pylori_Infection": int(hpylori),
-                        "Calcium_Intake": int(calcium),
-                        "Overall_Risk_Score": 0.0,
-                        "BMI": float(bmi),
-                        "Physical_Activity_Level": int(physical_activity),
-                        "county_STATE": int(county_state),
-                        "county_CTYNAME": county_name,
-                        "county_POPESTIMATE2015": float(county_pop),
-                        "Habitos_Riesgo": int(habitos),
-                        "Riesgo_Clinico": int(riesgo_clinico),
-                        "Factor_Protector": int(factor_protector),
-                        "Balance_Riesgo": int(balance),
-                        "Edad_Rango": str(edad_rango)
-                    }
-                    
-                    # Generar predicción con el modelo preferido
-                    pref_risk_model = preferred_model(risk_models)
-                    input_df = pd.DataFrame([patient_dict])[risk_features]
-                    
-                    try:
-                        pred_id = int(risk_models[pref_risk_model].predict(input_df)[0])
-                        proba = risk_models[pref_risk_model].predict_proba(input_df)[0]
-                        pred_label = label_encoder.inverse_transform([pred_id])[0]
-                        patient_dict["Risk_Level"] = pred_label
-                        
-                        # Guardar en SQLite
-                        import db_infrastructure as db
-                        db.insert_paciente(str(DB_PATH), patient_dict)
-                        db.save_prediction_riesgo(str(DB_PATH), int(pat_id), pred_label, tuple(proba))
-                        
-                        # Limpiar cache y recargar
-                        st.cache_data.clear()
-                        st.success(f"¡Paciente {pat_id} ingresado! Nivel de prioridad predicho: {RISK_LABELS.get(pred_label, pred_label)}")
-                    except Exception as ex:
-                        st.error(f"Error al generar predicción: {ex}")
-                        
-        else:  # Inventario
-            st.caption("Simula el registro de consumo o stock en tiempo real.")
-            with st.form("ocr_stock_form", clear_on_submit=True):
-                insumo_id = st.selectbox("Insumo", sorted(stock_df["ID_Insumo"].unique()))
-                fecha_val = st.date_input("Fecha", value=pd.Timestamp.now())
-                stock_act = st.number_input("Stock Actual", min_value=0.0, value=500.0, step=1.0)
-                consumo_d = st.number_input("Consumo Diario Reciente", min_value=0.0, value=20.0, step=1.0)
-                lead_t = st.number_input("Lead Time (Días de Reposición)", min_value=1, value=14, step=1)
-                
-                # Variables del contexto del albergue
-                ocupacion_alb = st.slider("Ocupación Albergue (0.0 - 1.0)", 0.0, 1.0, 0.7, 0.05)
-                pacientes_alto = st.number_input("Pacientes de Alto Riesgo actuales", min_value=0, value=5, step=1)
-                ocupacion_tot = st.number_input("Ocupación Total Familias", min_value=0, value=75, step=1)
-                
-                submitted = st.form_submit_button("Ingestar y Proyectar")
-                
-                if submitted:
-                    punto_re = consumo_d * lead_t
-                    ratio_s = stock_act / max(punto_re, 0.1)
-                    
-                    stock_dict = {
-                        "Fecha": str(fecha_val),
-                        "ID_Insumo": insumo_id,
-                        "Stock_Actual": float(stock_act),
-                        "Consumo_Diario": float(consumo_d),
-                        "Lead_Time": int(lead_t),
-                        "Ocupacion_Albergue": float(ocupacion_alb),
-                        "Pacientes_Alto_Riesgo": int(pacientes_alto),
-                        "Ocupacion_Total": int(ocupacion_tot),
-                        "Punto_Reorden": float(punto_re),
-                        "Ratio_Stock": float(ratio_s),
-                        "Necesita_Reabastecimiento": 2 if ratio_s <= RATIO_CRITICO else (1 if ratio_s <= RATIO_PREVENTIVO else 0)
-                    }
-                    
-                    # Ejecutar predicción
-                    pref_stock_model = preferred_model(stock_models)
-                    # Necesitamos calcular promedios móviles para la fila
-                    item_df = stock_df[stock_df["ID_Insumo"] == insumo_id].sort_values("Fecha")
-                    consumo_7d_est = float(item_df["Consumo_Diario"].tail(7).mean()) if not item_df.empty else consumo_d
-                    consumo_14d_est = float(item_df["Consumo_Diario"].tail(14).mean()) if not item_df.empty else consumo_d
-                    
-                    stock_row = {
-                        "Consumo_Diario": consumo_d,
-                        "Lead_Time": lead_t,
-                        "Ocupacion_Albergue": ocupacion_alb,
-                        "Consumo_7d": consumo_7d_est,
-                        "Consumo_14d": consumo_14d_est,
-                        "Punto_Reorden": punto_re,
-                        "Ratio_Stock": ratio_s,
-                        "Pacientes_Alto_Riesgo": pacientes_alto,
-                        "Ocupacion_Total": ocupacion_tot
-                    }
-                    
-                    try:
-                        input_df = pd.DataFrame([stock_row])[stock_features]
-                        pred_stock_val = stock_models[pref_stock_model].predict(input_df)[0]
-                        pred_ratio = pred_stock_val / max(punto_re, 0.1)
-                        alerta_pred = alert_from_ratio(pred_ratio)
-                        
-                        # Guardar en SQLite
-                        import db_infrastructure as db
-                        db.insert_inventario(str(DB_PATH), stock_dict)
-                        db.save_prediction_stock(str(DB_PATH), insumo_id, str(fecha_val), "7/14d", float(pred_stock_val), alerta_pred)
-                        
-                        # Limpiar cache y recargar
-                        st.cache_data.clear()
-                        st.success(f"¡Inventario de {insumo_id} actualizado! Alerta proyectada: {alerta_pred}")
-                    except Exception as ex:
-                        st.error(f"Error al generar predicción de inventario: {ex}")
-
-    st.sidebar.divider()
-    st.sidebar.markdown(f"**{section}**")
-    st.sidebar.caption(SECTION_DESCRIPTIONS[section])
-    st.sidebar.divider()
-    st.sidebar.markdown("**Caracteristicas clave**")
-    st.sidebar.markdown("- Alertas de stock en tiempo real")
-    st.sidebar.markdown("- Priorizacion clinica con simulador")
-    st.sidebar.markdown("- Menu estadistico interactivo")
-    st.sidebar.markdown("- Gobernanza MLOps y etica")
-    return section
-
-
 health_df, stock_df, _health_daily_df = load_data()
-risk_models, risk_metrics_df, risk_features, label_encoder, confusion_df, risk_selected = train_risk_models(
-    health_df
+page = render_top_navigation()
+
+# Lazy/trained model containers
+risk_models = None
+risk_metrics_df = None
+risk_features = None
+label_encoder = None
+confusion_df = None
+risk_selected = None
+
+stock_models = None
+stock_metrics_df = None
+stock_features = None
+stock_selected = None
+
+MODEL_DIR = BASE_DIR / "models"
+RISK_BUNDLE = MODEL_DIR / "risk_bundle.joblib"
+STOCK_BUNDLE = MODEL_DIR / "stock_bundle.joblib"
+
+if page in ("Inicio", "Modelado"):
+    with st.spinner("Preparando modelos (puede tardar unos segundos)..."):
+        rb = load_bundle(RISK_BUNDLE)
+        sb = load_bundle(STOCK_BUNDLE)
+        if rb is not None:
+            try:
+                risk_models = rb["models"]
+                risk_metrics_df = rb["metrics"]
+                risk_features = rb["features"]
+                label_encoder = rb.get("label_encoder")
+                confusion_df = rb.get("confusion")
+                risk_selected = rb.get("selected")
+            except Exception:
+                rb = None
+
+        if sb is not None:
+            try:
+                stock_models = sb["models"]
+                stock_metrics_df = sb["metrics"]
+                stock_features = sb["features"]
+                stock_selected = sb.get("selected")
+            except Exception:
+                sb = None
+
+        if rb is None:
+            risk_models, risk_metrics_df, risk_features, label_encoder, confusion_df, risk_selected = train_risk_models(
+                health_df
+            )
+            try:
+                save_bundle(RISK_BUNDLE, {
+                    "models": risk_models,
+                    "metrics": risk_metrics_df,
+                    "features": risk_features,
+                    "label_encoder": label_encoder,
+                    "confusion": confusion_df,
+                    "selected": risk_selected,
+                })
+            except Exception:
+                pass
+
+        if sb is None:
+            stock_models, stock_metrics_df, stock_features, stock_selected = train_stock_models(stock_df)
+            try:
+                save_bundle(STOCK_BUNDLE, {
+                    "models": stock_models,
+                    "metrics": stock_metrics_df,
+                    "features": stock_features,
+                    "selected": stock_selected,
+                })
+            except Exception:
+                pass
+elif page == "Control Stock":
+    with st.spinner("Preparando datos de inventario..."):
+        sb = load_bundle(STOCK_BUNDLE)
+        if sb is not None:
+            stock_models = sb.get("models")
+            stock_metrics_df = sb.get("metrics")
+            stock_features = sb.get("features")
+            stock_selected = sb.get("selected")
+        else:
+            stock_models, stock_metrics_df, stock_features, stock_selected = train_stock_models(stock_df)
+            save_bundle(STOCK_BUNDLE, {"models": stock_models, "metrics": stock_metrics_df, "features": stock_features, "selected": stock_selected})
+elif page == "Gravedad Paciente":
+    with st.spinner("Preparando datos clínicos..."):
+        rb = load_bundle(RISK_BUNDLE)
+        if rb is not None:
+            risk_models = rb.get("models")
+            risk_metrics_df = rb.get("metrics")
+            risk_features = rb.get("features")
+            label_encoder = rb.get("label_encoder")
+            confusion_df = rb.get("confusion")
+            risk_selected = rb.get("selected")
+        else:
+            risk_models, risk_metrics_df, risk_features, label_encoder, confusion_df, risk_selected = train_risk_models(
+                health_df
+            )
+            save_bundle(RISK_BUNDLE, {"models": risk_models, "metrics": risk_metrics_df, "features": risk_features, "label_encoder": label_encoder, "confusion": confusion_df, "selected": risk_selected})
+
+render_final_page(
+    page,
+    health_df,
+    stock_df,
+    risk_metrics_df,
+    stock_metrics_df,
+    risk_models,
+    stock_models,
+    risk_features,
+    stock_features,
+    label_encoder,
+    confusion_df,
+    risk_selected,
+    stock_selected,
 )
-stock_models, stock_metrics_df, stock_features, stock_selected = train_stock_models(stock_df)
-
-section = render_sidebar(health_df, stock_df, risk_models, risk_features, label_encoder, stock_models, stock_features)
-
-st.title("ALDIMI Core AI")
-st.caption(SECTION_DESCRIPTIONS[section])
-
-if section == "Resumen ejecutivo":
-    render_executive_view(
-        health_df, stock_df, risk_metrics_df, stock_metrics_df, risk_selected, stock_selected
-    )
-elif section == "Inventario predictivo":
-    render_inventory_view(stock_df, stock_models, stock_features, stock_selected)
-elif section == "Priorizacion clinica":
-    render_clinical_view(
-        health_df, risk_models, risk_features, label_encoder, confusion_df, risk_selected
-    )
-elif section == "Menu estadistico":
-    render_statistics_view(health_df, stock_df)
-elif section == "MLOps":
-    render_mlops_view(risk_metrics_df, stock_metrics_df, risk_selected, stock_selected)
-elif section == "Impacto ODS y etica":
-    render_impact_ethics_view(health_df, stock_df)
-else:
-    render_ecosystem_view()

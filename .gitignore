@@ -22,4 +22,15 @@ build/
 *.egg-info/
 *.log
 *.db
-aldimi.db
+aldimi.db
+models/
+data/raw/
+data/*.csv
+.DS_Store
+.vscode/
+.idea/
+.env
+*.joblib
+*.sqlite3
+*.h5
+.cache/
