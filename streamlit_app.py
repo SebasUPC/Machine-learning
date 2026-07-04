@@ -92,19 +92,26 @@ def inject_styles() -> None:
         <style>
         .block-container { padding-top: 1.2rem; }
         .feature-card {
-            background: linear-gradient(135deg, #f8f9fa 0%, #eef2f7 100%);
-            border-left: 4px solid #1d3557;
-            border-radius: 8px;
-            padding: 0.85rem 1rem;
-            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #f8f9fa 0%, #eef2f7 100%) !important;
+            border-left: 4px solid #1d3557 !important;
+            border-radius: 8px !important;
+            padding: 0.85rem 1rem !important;
+            margin-bottom: 0.5rem !important;
         }
-        .feature-card h4 { margin: 0 0 0.25rem 0; color: #1d3557; font-size: 0.95rem; }
-        .feature-card p { margin: 0; color: #495057; font-size: 0.85rem; }
+        .feature-card h4 { margin: 0 0 0.25rem 0 !important; color: #1d3557 !important; font-size: 0.95rem !important; }
+        .feature-card p { margin: 0 !important; color: #495057 !important; font-size: 0.85rem !important; }
         div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid #dee2e6;
-            border-radius: 10px;
-            padding: 0.5rem 0.75rem;
+            background-color: #f8f9fa !important;
+            border: 1px solid #dee2e6 !important;
+            border-radius: 10px !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        /* Garantizar visibilidad de etiqueta y valor en temas claros/oscuros */
+        div[data-testid="stMetric"] label[data-testid="stMetricLabel"] {
+            color: #495057 !important;
+        }
+        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+            color: #1d3557 !important;
         }
         </style>
         """,
