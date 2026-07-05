@@ -1,222 +1,218 @@
-import sqlite3
+"""Capa de base de datos (SQLite) del ecosistema ALDIMI Core AI.
+
+Implementa la **integracion de datos** (Fase 3 de CRISP-DM): los datasets
+procesados de salud y logistica se persisten en una base relacional unica
+(``aldimi.db``), que el dashboard y los modelos consumen en lugar de leer CSV
+sueltos. La eleccion de SQLite es por portabilidad academica; el esquema es
+directamente migrable a **MySQL / BigQuery** para produccion (persistencia,
+trazabilidad, auditoria y escalabilidad de 50 a 100 familias).
+
+El esquema se crea de forma dinamica a partir de los datasets preparados para
+mantener coherencia con la fase de preparacion (esquema real de los datos).
+"""
 import os
-from pathlib import Path
+import sqlite3
+
 import pandas as pd
 
+
 def get_connection(db_path: str):
-    """Establece una conexión con la base de datos SQLite."""
+    """Establece una conexion con la base de datos SQLite."""
     conn = sqlite3.connect(db_path)
-    # Habilitar soporte de llaves foráneas
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
+
+def _table_is_empty(cursor, table: str) -> bool:
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table,)
+    )
+    if cursor.fetchone() is None:
+        return True
+    cursor.execute(f"SELECT COUNT(*) FROM {table};")
+    return cursor.fetchone()[0] == 0
+
+
 def init_db(db_path: str, health_csv_path: str, stock_csv_path: str):
-    """Crea las tablas de la base de datos e ingesta los datos iniciales si está vacía."""
+    """Crea las tablas e ingesta los datasets procesados si estan vacias.
+
+    - ``pacientes``  <- dataset de salud preparado (esquema real de leucemia).
+    - ``inventario`` <- dataset de logistica preparado (serie por insumo/dia).
+    - ``predicciones_riesgo`` / ``predicciones_stock`` <- historial de inferencias.
+    """
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-        
+
     conn = get_connection(db_path)
     cursor = conn.cursor()
 
-    # 1. Tabla de pacientes
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS pacientes (
-        Patient_ID INTEGER PRIMARY KEY,
-        Cancer_Type TEXT,
-        Age INTEGER,
-        Gender INTEGER,
-        Smoking INTEGER,
-        Alcohol_Use INTEGER,
-        Obesity INTEGER,
-        Family_History INTEGER,
-        Diet_Red_Meat INTEGER,
-        Diet_Salted_Processed INTEGER,
-        Fruit_Veg_Intake INTEGER,
-        Physical_Activity INTEGER,
-        Air_Pollution INTEGER,
-        Occupational_Hazards INTEGER,
-        BRCA_Mutation INTEGER,
-        H_Pylori_Infection INTEGER,
-        Calcium_Intake INTEGER,
-        Overall_Risk_Score REAL,
-        BMI REAL,
-        Physical_Activity_Level INTEGER,
-        Risk_Level TEXT,
-        county_STATE INTEGER,
-        county_CTYNAME TEXT,
-        county_POPESTIMATE2015 REAL,
-        Habitos_Riesgo INTEGER,
-        Riesgo_Clinico INTEGER,
-        Factor_Protector INTEGER,
-        Balance_Riesgo INTEGER,
-        Edad_Rango TEXT
-    );
-    """)
-
-    # 2. Tabla de inventario
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS inventario (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        Fecha TEXT,
-        ID_Insumo TEXT,
-        Stock_Actual REAL,
-        Consumo_Diario REAL,
-        Lead_Time INTEGER,
-        Ocupacion_Albergue REAL,
-        Pacientes_Alto_Riesgo INTEGER,
-        Ocupacion_Total INTEGER,
-        Punto_Reorden REAL,
-        Ratio_Stock REAL,
-        Necesita_Reabastecimiento INTEGER
-    );
-    """)
-
-    # 3. Tabla de predicciones de riesgo (historial/registro)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS predicciones_riesgo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        Patient_ID INTEGER,
-        Risk_Level_Pred TEXT,
-        Proba_Bajo REAL,
-        Proba_Medio REAL,
-        Proba_Alto REAL,
-        Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (Patient_ID) REFERENCES pacientes(Patient_ID) ON DELETE CASCADE
-    );
-    """)
-
-    # 4. Tabla de predicciones de stock (historial/registro)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS predicciones_stock (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ID_Insumo TEXT,
-        Fecha TEXT,
-        Horizonte TEXT,
-        Stock_Proyectado REAL,
-        Alerta TEXT,
-        Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    """)
-
+    # Tablas de historial de predicciones (esquema fijo)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS predicciones_riesgo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Patient_ID INTEGER,
+            Prioridad_Pred TEXT,
+            Proba_Bajo REAL,
+            Proba_Medio REAL,
+            Proba_Alto REAL,
+            Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS predicciones_stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ID_Insumo TEXT,
+            Fecha TEXT,
+            Horizonte TEXT,
+            Stock_Proyectado REAL,
+            Alerta TEXT,
+            Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
     conn.commit()
 
-    # Ingestar pacientes si está vacía
-    cursor.execute("SELECT COUNT(*) FROM pacientes;")
-    if cursor.fetchone()[0] == 0:
-        if os.path.exists(health_csv_path):
+    # Ingesta dinamica del dataset de salud preparado
+    if _table_is_empty(cursor, "pacientes"):
+        if health_csv_path and os.path.exists(health_csv_path):
             print(f"Sembrando tabla 'pacientes' desde {health_csv_path}...")
-            df_health = pd.read_csv(health_csv_path)
-            # Asegurar tipos correctos
-            df_health.to_sql("pacientes", conn, if_exists="append", index=False)
+            pd.read_csv(health_csv_path).to_sql("pacientes", conn, if_exists="replace", index=False)
         else:
-            print(f"ADVERTENCIA: Archivo de salud no encontrado en {health_csv_path}")
+            print(f"ADVERTENCIA: dataset de salud no encontrado en {health_csv_path}")
 
-    # Ingestar inventario si está vacía
-    cursor.execute("SELECT COUNT(*) FROM inventario;")
-    if cursor.fetchone()[0] == 0:
-        if os.path.exists(stock_csv_path):
+    # Ingesta dinamica del dataset de logistica preparado
+    if _table_is_empty(cursor, "inventario"):
+        if stock_csv_path and os.path.exists(stock_csv_path):
             print(f"Sembrando tabla 'inventario' desde {stock_csv_path}...")
-            df_stock = pd.read_csv(stock_csv_path)
-            df_stock.to_sql("inventario", conn, if_exists="append", index=False)
+            pd.read_csv(stock_csv_path).to_sql("inventario", conn, if_exists="replace", index=False)
         else:
-            print(f"ADVERTENCIA: Archivo de inventario no encontrado en {stock_csv_path}")
+            print(f"ADVERTENCIA: dataset de inventario no encontrado en {stock_csv_path}")
 
+    # Indice unico sobre Patient_ID para habilitar upsert (ON CONFLICT) en pacientes
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pacientes';")
+    if cursor.fetchone() is not None:
+        cols = [r[1] for r in cursor.execute("PRAGMA table_info(pacientes);").fetchall()]
+        if "Patient_ID" in cols:
+            try:
+                cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pacientes_id ON pacientes(Patient_ID);")
+            except Exception as e:
+                print(f"No se pudo crear indice unico en pacientes: {e}")
+
+    conn.commit()
     conn.close()
+
 
 def fetch_all_pacientes(db_path: str) -> pd.DataFrame:
-    """Retorna todos los pacientes de la base de datos SQLite."""
+    """Retorna todos los pacientes de la base de datos."""
     conn = get_connection(db_path)
-    df = pd.read_sql_query("SELECT * FROM pacientes;", conn)
+    try:
+        df = pd.read_sql_query("SELECT * FROM pacientes;", conn)
+    except Exception:
+        df = pd.DataFrame()
     conn.close()
     return df
+
 
 def fetch_all_inventario(db_path: str) -> pd.DataFrame:
-    """Retorna todo el historial de inventario de la base de datos SQLite."""
+    """Retorna el historial de inventario ordenado por fecha."""
     conn = get_connection(db_path)
-    df = pd.read_sql_query("SELECT * FROM inventario ORDER BY Fecha ASC;", conn)
-    if not df.empty and 'Fecha' in df.columns:
-        df['Fecha'] = pd.to_datetime(df['Fecha'])
+    try:
+        df = pd.read_sql_query("SELECT * FROM inventario;", conn)
+        if not df.empty and "Fecha" in df.columns:
+            df["Fecha"] = pd.to_datetime(df["Fecha"])
+            df = df.sort_values(["ID_Insumo", "Fecha"]) if "ID_Insumo" in df.columns else df.sort_values("Fecha")
+    except Exception:
+        df = pd.DataFrame()
     conn.close()
     return df
 
-def insert_paciente(db_path: str, patient_data: dict) -> bool:
-    """Inserta o actualiza un paciente en la base de datos."""
+
+def _dynamic_upsert(db_path: str, table: str, data: dict, pk: str | None = None) -> bool:
+    """Insert (o insert-or-replace si hay PK) generico basado en un dict."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
-    columns = list(patient_data.keys())
+    columns = list(data.keys())
     placeholders = ", ".join(["?"] * len(columns))
     col_str = ", ".join(columns)
-    
-    # Manejar insert or replace
-    update_str = ", ".join([f"{col} = excluded.{col}" for col in columns if col != 'Patient_ID'])
-    query = f"""
-    INSERT INTO pacientes ({col_str})
-    VALUES ({placeholders})
-    ON CONFLICT(Patient_ID) DO UPDATE SET {update_str};
-    """
-    
     try:
-        cursor.execute(query, [patient_data[c] for c in columns])
+        if pk and pk in columns:
+            update_str = ", ".join([f"{c}=excluded.{c}" for c in columns if c != pk])
+            query = (
+                f"INSERT INTO {table} ({col_str}) VALUES ({placeholders}) "
+                f"ON CONFLICT({pk}) DO UPDATE SET {update_str};"
+            )
+        else:
+            query = f"INSERT INTO {table} ({col_str}) VALUES ({placeholders});"
+        cursor.execute(query, [data[c] for c in columns])
         conn.commit()
-        success = True
+        ok = True
     except Exception as e:
-        print(f"Error insertando paciente: {e}")
-        success = False
+        # Degradar a INSERT simple si el upsert por PK no es soportado
+        try:
+            cursor.execute(
+                f"INSERT INTO {table} ({col_str}) VALUES ({placeholders});",
+                [data[c] for c in columns],
+            )
+            conn.commit()
+            ok = True
+        except Exception as e2:
+            print(f"Error insertando en {table}: {e} / {e2}")
+            ok = False
     finally:
         conn.close()
-    return success
+    return ok
+
+
+def insert_paciente(db_path: str, patient_data: dict) -> bool:
+    """Inserta o actualiza un paciente (clave Patient_ID)."""
+    return _dynamic_upsert(db_path, "pacientes", patient_data, pk="Patient_ID")
+
 
 def insert_inventario(db_path: str, stock_data: dict) -> bool:
-    """Inserta un registro diario de inventario."""
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    columns = list(stock_data.keys())
-    placeholders = ", ".join(["?"] * len(columns))
-    col_str = ", ".join(columns)
-    
-    query = f"""
-    INSERT INTO inventario ({col_str})
-    VALUES ({placeholders});
-    """
-    
-    try:
-        cursor.execute(query, [stock_data[c] for c in columns])
-        conn.commit()
-        success = True
-    except Exception as e:
-        print(f"Error insertando inventario: {e}")
-        success = False
-    finally:
-        conn.close()
-    return success
+    """Inserta un registro de inventario."""
+    return _dynamic_upsert(db_path, "inventario", stock_data)
 
-def save_prediction_riesgo(db_path: str, patient_id: int, risk_level: str, probas: tuple):
-    """Guarda una predicción de riesgo clínico en la base de datos."""
+
+def save_prediction_riesgo(db_path: str, patient_id: int, prioridad: str, probas: tuple):
+    """Guarda una prediccion de prioridad clinica (Bajo/Medio/Alto)."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     try:
-        cursor.execute("""
-        INSERT INTO predicciones_riesgo (Patient_ID, Risk_Level_Pred, Proba_Bajo, Proba_Medio, Proba_Alto)
-        VALUES (?, ?, ?, ?, ?);
-        """, (patient_id, risk_level, probas[0], probas[1], probas[2]))
+        cursor.execute(
+            """
+            INSERT INTO predicciones_riesgo
+                (Patient_ID, Prioridad_Pred, Proba_Bajo, Proba_Medio, Proba_Alto)
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (patient_id, prioridad, float(probas[0]), float(probas[1]), float(probas[2])),
+        )
         conn.commit()
     except Exception as e:
-        print(f"Error guardando predicción de riesgo: {e}")
+        print(f"Error guardando prediccion de riesgo: {e}")
     finally:
         conn.close()
 
-def save_prediction_stock(db_path: str, id_insumo: str, fecha: str, horizonte: str, stock_proyectado: float, alerta: str):
-    """Guarda una predicción de stock en la base de datos."""
+
+def save_prediction_stock(db_path: str, id_insumo: str, fecha: str, horizonte: str,
+                          stock_proyectado: float, alerta: str):
+    """Guarda una prediccion de stock proyectado."""
     conn = get_connection(db_path)
     cursor = conn.cursor()
     try:
-        cursor.execute("""
-        INSERT INTO predicciones_stock (ID_Insumo, Fecha, Horizonte, Stock_Proyectado, Alerta)
-        VALUES (?, ?, ?, ?, ?);
-        """, (id_insumo, fecha, horizonte, stock_proyectado, alerta))
+        cursor.execute(
+            """
+            INSERT INTO predicciones_stock
+                (ID_Insumo, Fecha, Horizonte, Stock_Proyectado, Alerta)
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (id_insumo, fecha, horizonte, float(stock_proyectado), alerta),
+        )
         conn.commit()
     except Exception as e:
-        print(f"Error guardando predicción de stock: {e}")
+        print(f"Error guardando prediccion de stock: {e}")
     finally:
         conn.close()
