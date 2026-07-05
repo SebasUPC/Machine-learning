@@ -1,0 +1,5 @@
+Horizonte,Modelo,MAE,RMSE,R2
+t+7,Random Forest,17.316,21.44,0.9572
+t+7,XGBoost,15.79,19.563,0.9644
+t+14,Random Forest,19.148,23.687,0.9847
+t+14,XGBoost,15.758,19.694,0.9895

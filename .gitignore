@@ -1,0 +1,28 @@
+# Entorno local
+.venv/
+venv/
+env/
+
+# Caché Python / notebooks
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# BD SQLite local (se regenera desde data/processed/)
+data/aldimi.db
+data/processed/aldimi.db
+**/aldimi.db
+
+# Secretos y IDE
+.env
+.env.*
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Los artefactos .joblib en models/ SÍ se versionan (equipo + Colab)
