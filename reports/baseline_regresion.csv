@@ -1,0 +1,5 @@
+Horizonte,Modelo,MAE,RMSE,R2
+t+7,Regresion lineal,22.988,27.386,0.9301
+t+7,Media movil (naive),13.74,17.15,0.9726
+t+14,Regresion lineal,23.877,28.421,0.978
+t+14,Media movil (naive),15.168,18.993,0.9902

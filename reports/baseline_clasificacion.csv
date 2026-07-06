@@ -1,0 +1,3 @@
+Modelo,Accuracy,F1_macro,F1_Alto
+Arbol de decision (prof=4),0.9308,0.9208,0.9163
+Regresion logistica,0.9321,0.9229,0.9212
