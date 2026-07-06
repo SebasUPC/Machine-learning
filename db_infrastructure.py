@@ -33,6 +33,24 @@ def _table_is_empty(cursor, table: str) -> bool:
     return cursor.fetchone()[0] == 0
 
 
+def _table_needs_refresh(cursor, table: str, csv_path: str, required_columns: tuple[str, ...]) -> bool:
+    """Retorna True si la tabla debe resembrarse desde un CSV procesado."""
+    if not csv_path or not os.path.exists(csv_path):
+        return False
+    if _table_is_empty(cursor, table):
+        return True
+
+    try:
+        csv_columns = set(pd.read_csv(csv_path).columns)
+    except Exception:
+        return False
+
+    table_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table});").fetchall()}
+    return not all(column in table_columns for column in required_columns) or not all(
+        column in csv_columns for column in required_columns
+    )
+
+
 def init_db(db_path: str, health_csv_path: str, stock_csv_path: str):
     """Crea las tablas e ingesta los datasets procesados si estan vacias.
 
@@ -77,7 +95,7 @@ def init_db(db_path: str, health_csv_path: str, stock_csv_path: str):
     conn.commit()
 
     # Ingesta dinamica del dataset de salud preparado
-    if _table_is_empty(cursor, "pacientes"):
+    if _table_needs_refresh(cursor, "pacientes", health_csv_path, ("Patient_ID", "Prioridad_Atencion", "Prioridad_Score")):
         if health_csv_path and os.path.exists(health_csv_path):
             print(f"Sembrando tabla 'pacientes' desde {health_csv_path}...")
             pd.read_csv(health_csv_path).to_sql("pacientes", conn, if_exists="replace", index=False)
@@ -85,7 +103,12 @@ def init_db(db_path: str, health_csv_path: str, stock_csv_path: str):
             print(f"ADVERTENCIA: dataset de salud no encontrado en {health_csv_path}")
 
     # Ingesta dinamica del dataset de logistica preparado
-    if _table_is_empty(cursor, "inventario"):
+    if _table_needs_refresh(
+        cursor,
+        "inventario",
+        stock_csv_path,
+        ("Fecha", "ID_Insumo", "Stock_Actual", "Demanda_Fut_7d", "Demanda_Fut_14d"),
+    ):
         if stock_csv_path and os.path.exists(stock_csv_path):
             print(f"Sembrando tabla 'inventario' desde {stock_csv_path}...")
             pd.read_csv(stock_csv_path).to_sql("inventario", conn, if_exists="replace", index=False)

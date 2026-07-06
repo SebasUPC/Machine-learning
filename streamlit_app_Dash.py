@@ -181,17 +181,43 @@ def render_page_header(section: str) -> None:
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health = db.fetch_all_pacientes(str(DB_PATH))
     stock = db.fetch_all_inventario(str(DB_PATH))
-    if health.empty and (DATA_PROCESSED / HEALTH_FILE).exists():
-        health = pd.read_csv(DATA_PROCESSED / HEALTH_FILE)
-    if stock.empty and (DATA_PROCESSED / STOCK_FILE).exists():
-        stock = pd.read_csv(DATA_PROCESSED / STOCK_FILE)
+    health_csv_path = DATA_PROCESSED / HEALTH_FILE
+    stock_csv_path = DATA_PROCESSED / STOCK_FILE
 
-    health["Prioridad_Atencion"] = pd.Categorical(
-        health["Prioridad_Atencion"].astype(str), categories=RISK_ORDER, ordered=True
-    )
+    if health.empty or ac.PRIORITY_TARGET not in health.columns:
+        if health_csv_path.exists():
+            health = pd.read_csv(health_csv_path)
+        else:
+            health = health.copy()
+
+    if stock.empty or "Fecha" not in stock.columns:
+        if stock_csv_path.exists():
+            stock = pd.read_csv(stock_csv_path)
+        else:
+            stock = stock.copy()
+
+    if ac.PRIORITY_TARGET not in health.columns:
+        if "Prioridad_Score" in health.columns:
+            health = ac.derive_priority_label(health)
+        else:
+            health[ac.PRIORITY_TARGET] = "Bajo"
+
+    if ac.PRIORITY_TARGET in health.columns:
+        health[ac.PRIORITY_TARGET] = pd.Categorical(
+            health[ac.PRIORITY_TARGET].astype(str), categories=RISK_ORDER, ordered=True
+        )
+
     if "Fecha" in stock.columns:
         stock["Fecha"] = pd.to_datetime(stock["Fecha"])
         stock = stock.sort_values(["ID_Insumo", "Fecha"])
+
+    if ac.DEMAND_TARGET_7 not in stock.columns or ac.DEMAND_TARGET_14 not in stock.columns:
+        if {"Consumo_Diario", "ID_Insumo", "Fecha"}.issubset(stock.columns):
+            stock = ac.build_demand_targets(stock)
+        else:
+            stock[ac.DEMAND_TARGET_7] = np.nan
+            stock[ac.DEMAND_TARGET_14] = np.nan
+
     # Recalcular features derivadas si faltan (robustez)
     if "Cobertura_Dias" not in stock.columns:
         stock = ac.add_stock_features(stock)
